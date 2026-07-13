@@ -68,7 +68,7 @@ jobs:
       - name: 📦 Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'           # Use Node.js 20 (LTS)
+          node-version: '22'           # Use Node.js 22 (LTS)
           cache: 'npm'                 # Cache npm packages for speed!
         # "with" passes inputs to the action
         # "cache: npm" → saves ~30 seconds on subsequent runs
@@ -107,7 +107,7 @@ jobs:
       - name: 📦 Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: 📥 Install dependencies
@@ -137,7 +137,7 @@ jobs:
       - name: 📦 Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: 📥 Install dependencies
