@@ -1,0 +1,159 @@
+# ============================================================
+# 🚀 CI PIPELINE — Your First GitHub Actions Workflow!
+# ============================================================
+#
+# THIS FILE IS THE HEART OF CI/CD.
+#
+# What happens when you push code to GitHub:
+# 1. GitHub detects the push
+# 2. GitHub reads THIS file
+# 3. GitHub spins up a fresh virtual machine (called a "runner")
+# 4. The runner executes each step in order
+# 5. If ANY step fails → the whole pipeline fails → ❌ red X on your PR
+# 6. If ALL steps pass → ✅ green checkmark → safe to merge
+#
+# File location matters! GitHub ONLY reads workflows from:
+#   .github/workflows/*.yml
+#
+# ============================================================
+
+# ─── NAME ─────────────────────────────────────────────
+# This name appears in the GitHub Actions tab
+name: CI Pipeline
+
+# ─── TRIGGERS ─────────────────────────────────────────
+# "on" defines WHEN this pipeline runs.
+# Think of it as: "Run this pipeline ON [event]"
+on:
+  # Trigger on every push to these branches
+  push:
+    branches:
+      - main      # Production branch
+      - develop   # Development branch
+
+  # Trigger on pull requests targeting these branches
+  # This is KEY — it checks code BEFORE it's merged!
+  pull_request:
+    branches:
+      - main
+      - develop
+
+  # Allow manual trigger from GitHub UI (useful for debugging)
+  workflow_dispatch:
+
+# ─── JOBS ─────────────────────────────────────────────
+# Jobs are the major stages of your pipeline.
+# By default, jobs run IN PARALLEL (for speed).
+# Use "needs" to create dependencies between jobs.
+jobs:
+
+  # ═══════════════════════════════════════════════════
+  # JOB 1: LINT — Check code quality
+  # ═══════════════════════════════════════════════════
+  # WHY: Catch style issues, unused variables, potential bugs
+  # BEFORE the code is even tested. Fast feedback!
+  lint:
+    name: 🔍 Lint Code
+    runs-on: ubuntu-latest  # Use a fresh Ubuntu VM
+
+    steps:
+      # Step 1: Check out the code
+      # Without this, the runner has an EMPTY filesystem!
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        # "uses" means: run a pre-built action from the marketplace
+        # actions/checkout@v4 = official GitHub action to clone your repo
+
+      # Step 2: Set up Node.js
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'           # Use Node.js 20 (LTS)
+          cache: 'npm'                 # Cache npm packages for speed!
+        # "with" passes inputs to the action
+        # "cache: npm" → saves ~30 seconds on subsequent runs
+
+      # Step 3: Install dependencies
+      - name: 📥 Install dependencies
+        run: npm ci
+        # "npm ci" vs "npm install":
+        #   npm ci    = Clean Install. Deletes node_modules, installs from lock file EXACTLY
+        #   npm install = May update lock file, less deterministic
+        # ALWAYS use "npm ci" in CI pipelines for reproducibility!
+
+      # Step 4: Run the linter
+      - name: 🔍 Run ESLint
+        run: npm run lint
+        # If ESLint finds errors, this step FAILS
+        # The job stops, and GitHub shows ❌
+
+  # ═══════════════════════════════════════════════════
+  # JOB 2: TEST — Run automated tests
+  # ═══════════════════════════════════════════════════
+  # WHY: Verify your code actually WORKS correctly.
+  # This is the most critical job in any CI pipeline.
+  test:
+    name: 🧪 Run Tests
+    runs-on: ubuntu-latest
+    needs: lint  # Only run tests AFTER lint passes
+    # "needs: lint" creates a dependency:
+    #   lint ✅ → test runs
+    #   lint ❌ → test is SKIPPED (no point testing broken code)
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 📥 Install dependencies
+        run: npm ci
+
+      - name: 🧪 Run tests
+        run: npm test
+        # Vitest runs all *.test.ts files
+        # Exit code 0 = all tests passed ✅
+        # Exit code 1 = at least one test failed ❌
+
+  # ═══════════════════════════════════════════════════
+  # JOB 3: BUILD — Compile TypeScript
+  # ═══════════════════════════════════════════════════
+  # WHY: Verify the code compiles without TypeScript errors.
+  # Also produces the production-ready JavaScript files.
+  build:
+    name: 🏗️ Build
+    runs-on: ubuntu-latest
+    needs: test  # Only build after tests pass
+    # Pipeline so far: lint ✅ → test ✅ → build
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 📥 Install dependencies
+        run: npm ci
+
+      - name: 🏗️ Build TypeScript
+        run: npm run build
+        # tsc compiles .ts → .js into the dist/ folder
+        # If there are type errors, this step FAILS
+
+      # Upload the built files as an "artifact"
+      # Artifacts = files that persist after the job ends
+      # Other jobs or humans can download them
+      - name: 📤 Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7  # Keep for 7 days, then auto-delete
