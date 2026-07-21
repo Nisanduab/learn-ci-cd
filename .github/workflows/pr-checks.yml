@@ -1,0 +1,90 @@
+# ============================================================
+# 🔀 PR CHECKS — Runs ONLY on Pull Requests
+# ============================================================
+#
+# MODULE 2 CONCEPT: Separate workflows for different events!
+#
+# Why a separate PR workflow?
+# - PRs need different checks than pushes (e.g., PR title validation)
+# - You might want to add PR-specific comments or labels
+# - Keeps concerns separated (single responsibility principle)
+#
+# ============================================================
+
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main, develop]
+    # Additional trigger types for PRs:
+    types: [opened, synchronize, reopened, edited]
+    # opened       = new PR created
+    # synchronize  = new commits pushed to PR
+    # reopened     = closed PR reopened
+    # edited       = PR title/description changed
+
+jobs:
+  # ═══════════════════════════════════════════════════
+  # Validate PR title follows Conventional Commits
+  # ═══════════════════════════════════════════════════
+  # Conventional Commits = a standard for commit messages:
+  #   feat: add login page
+  #   fix: resolve null pointer
+  #   docs: update README
+  #   chore: update dependencies
+  #
+  # Why? Enables automatic changelog generation and
+  # semantic versioning. Used by most open source projects.
+  validate-pr:
+    name: 📋 Validate PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📋 Check PR title format
+        run: |
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          echo "PR Title: $PR_TITLE"
+
+          # Check if PR title follows conventional commits format
+          # Regex: type(optional-scope): description
+          if echo "$PR_TITLE" | grep -qE "^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .+"; then
+            echo "✅ PR title follows conventional commits format!"
+          else
+            echo "❌ PR title must follow conventional commits format!"
+            echo ""
+            echo "Examples:"
+            echo "  feat: add user authentication"
+            echo "  fix: resolve login bug"
+            echo "  docs: update API documentation"
+            echo "  ci: add matrix builds"
+            echo ""
+            echo "Format: type(optional-scope): description"
+            exit 1
+          fi
+
+  # ═══════════════════════════════════════════════════
+  # Check for file size / large files
+  # ═══════════════════════════════════════════════════
+  # Prevents accidentally committing large files
+  # (e.g., node_modules, build artifacts, videos)
+  check-files:
+    name: 📁 Check File Sizes
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📁 Check for large files (>5MB)
+        run: |
+          LARGE_FILES=$(find . -type f -size +5M -not -path "./.git/*" -not -path "./node_modules/*")
+          if [ -n "$LARGE_FILES" ]; then
+            echo "❌ Found files larger than 5MB:"
+            echo "$LARGE_FILES"
+            echo ""
+            echo "Large files should not be committed to Git."
+            echo "Use .gitignore or Git LFS instead."
+            exit 1
+          else
+            echo "✅ No large files found!"
+          fi

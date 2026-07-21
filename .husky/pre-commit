@@ -1,0 +1,21 @@
+# ============================================
+# 🐶 HUSKY PRE-COMMIT HOOK
+# ============================================
+#
+# This runs AUTOMATICALLY before every "git commit".
+# If the lint fails, the commit is BLOCKED.
+#
+# Why? Catch issues BEFORE they reach CI.
+# Instead of: commit → push → CI fails → fix → commit → push
+# You get:    commit blocked → fix → commit → push → CI passes ✅
+#
+# This is called "shifting left" — catching problems
+# as early as possible in the development cycle.
+# ============================================
+
+echo "🔍 Running pre-commit checks..."
+
+# Run linter
+npm run lint
+
+echo "✅ Pre-commit checks passed!"

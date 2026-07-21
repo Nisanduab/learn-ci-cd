@@ -1,104 +1,62 @@
 # ============================================================
-# 🚀 CI PIPELINE — Your First GitHub Actions Workflow!
+# 🚀 CI PIPELINE — Module 2: Advanced GitHub Actions
 # ============================================================
 #
-# THIS FILE IS THE HEART OF CI/CD.
-#
-# What happens when you push code to GitHub:
-# 1. GitHub detects the push
-# 2. GitHub reads THIS file
-# 3. GitHub spins up a fresh virtual machine (called a "runner")
-# 4. The runner executes each step in order
-# 5. If ANY step fails → the whole pipeline fails → ❌ red X on your PR
-# 6. If ALL steps pass → ✅ green checkmark → safe to merge
-#
-# File location matters! GitHub ONLY reads workflows from:
-#   .github/workflows/*.yml
+# WHAT'S NEW IN MODULE 2:
+#   ✅ Matrix Builds — test across multiple Node.js versions
+#   ✅ Code Coverage — track how much code is tested
+#   ✅ Concurrency — cancel outdated runs to save CI minutes
+#   ✅ Job Outputs — pass data between jobs
+#   ✅ Conditional Steps — run steps only in certain conditions
+#   ✅ Status Badge — show CI status in README
 #
 # ============================================================
 
-# ─── NAME ─────────────────────────────────────────────
-# This name appears in the GitHub Actions tab
 name: CI Pipeline
 
 # ─── TRIGGERS ─────────────────────────────────────────
-# "on" defines WHEN this pipeline runs.
-# Think of it as: "Run this pipeline ON [event]"
 on:
-  # Trigger on every push to these branches
   push:
-    branches:
-      - main      # Production branch
-      - develop   # Development branch
-
-  # Trigger on pull requests targeting these branches
-  # This is KEY — it checks code BEFORE it's merged!
+    branches: [main, develop]
   pull_request:
-    branches:
-      - main
-      - develop
-
-  # Allow manual trigger from GitHub UI (useful for debugging)
+    branches: [main, develop]
   workflow_dispatch:
+    # NEW! Manual trigger WITH inputs
+    # Go to Actions tab → CI Pipeline → "Run workflow" button
+    # You can pass custom inputs!
+    inputs:
+      skip_lint:
+        description: 'Skip the lint step (for debugging)'
+        required: false
+        type: boolean
+        default: false
 
-# ─── JOBS ─────────────────────────────────────────────
-# Jobs are the major stages of your pipeline.
-# By default, jobs run IN PARALLEL (for speed).
-# Use "needs" to create dependencies between jobs.
+# ─── CONCURRENCY ──────────────────────────────────────
+# NEW! If you push twice quickly, cancel the first run.
+# Why? No point running CI on outdated code — saves CI minutes!
+# Real companies save thousands of dollars/month with this.
+concurrency:
+  group: ci-${{ github.ref }}
+  # group = unique key per branch. Same branch = same group.
+  # If a new run starts in the same group, the old one is cancelled.
+  cancel-in-progress: true
+
+# ─── ENVIRONMENT VARIABLES ────────────────────────────
+# NEW! Global env vars available to ALL jobs and steps.
+# Useful for shared configuration.
+env:
+  NODE_ENV: test
+
 jobs:
 
   # ═══════════════════════════════════════════════════
-  # JOB 1: LINT — Check code quality
+  # JOB 1: LINT
   # ═══════════════════════════════════════════════════
-  # WHY: Catch style issues, unused variables, potential bugs
-  # BEFORE the code is even tested. Fast feedback!
   lint:
     name: 🔍 Lint Code
-    runs-on: ubuntu-latest  # Use a fresh Ubuntu VM
-
-    steps:
-      # Step 1: Check out the code
-      # Without this, the runner has an EMPTY filesystem!
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        # "uses" means: run a pre-built action from the marketplace
-        # actions/checkout@v4 = official GitHub action to clone your repo
-
-      # Step 2: Set up Node.js
-      - name: 📦 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'           # Use Node.js 22 (LTS)
-          cache: 'npm'                 # Cache npm packages for speed!
-        # "with" passes inputs to the action
-        # "cache: npm" → saves ~30 seconds on subsequent runs
-
-      # Step 3: Install dependencies
-      - name: 📥 Install dependencies
-        run: npm ci
-        # "npm ci" vs "npm install":
-        #   npm ci    = Clean Install. Deletes node_modules, installs from lock file EXACTLY
-        #   npm install = May update lock file, less deterministic
-        # ALWAYS use "npm ci" in CI pipelines for reproducibility!
-
-      # Step 4: Run the linter
-      - name: 🔍 Run ESLint
-        run: npm run lint
-        # If ESLint finds errors, this step FAILS
-        # The job stops, and GitHub shows ❌
-
-  # ═══════════════════════════════════════════════════
-  # JOB 2: TEST — Run automated tests
-  # ═══════════════════════════════════════════════════
-  # WHY: Verify your code actually WORKS correctly.
-  # This is the most critical job in any CI pipeline.
-  test:
-    name: 🧪 Run Tests
     runs-on: ubuntu-latest
-    needs: lint  # Only run tests AFTER lint passes
-    # "needs: lint" creates a dependency:
-    #   lint ✅ → test runs
-    #   lint ❌ → test is SKIPPED (no point testing broken code)
+    # NEW! Conditional execution — skip if manual trigger says so
+    if: ${{ !inputs.skip_lint }}
 
     steps:
       - name: 📥 Checkout code
@@ -113,22 +71,91 @@ jobs:
       - name: 📥 Install dependencies
         run: npm ci
 
-      - name: 🧪 Run tests
-        run: npm test
-        # Vitest runs all *.test.ts files
-        # Exit code 0 = all tests passed ✅
-        # Exit code 1 = at least one test failed ❌
+      - name: 🔍 Run ESLint
+        run: npm run lint
 
   # ═══════════════════════════════════════════════════
-  # JOB 3: BUILD — Compile TypeScript
+  # JOB 2: TEST — Now with MATRIX BUILDS!
   # ═══════════════════════════════════════════════════
-  # WHY: Verify the code compiles without TypeScript errors.
-  # Also produces the production-ready JavaScript files.
+  # MATRIX BUILDS = run the same job multiple times with
+  # different configurations. Like a for-loop for CI!
+  #
+  # Why? Your code might work on Node 22 but break on Node 20.
+  # Matrix builds catch these compatibility issues.
+  #
+  # Real-world use cases:
+  #   - Test across Node.js 18, 20, 22
+  #   - Test on Ubuntu, Windows, macOS
+  #   - Test with different database versions
+  test:
+    name: 🧪 Test (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    needs: lint
+
+    # ─── THE MATRIX ──────────────────────────────────
+    strategy:
+      matrix:
+        node-version: [20, 22]
+        # This creates 2 parallel jobs:
+        #   🧪 Test (Node 20)
+        #   🧪 Test (Node 22)
+        #
+        # Want to add OS testing too? Uncomment this:
+        # os: [ubuntu-latest, windows-latest]
+        # This would create 4 jobs: 2 node versions × 2 OS = 4 combinations!
+
+      fail-fast: false
+      # fail-fast: true  (default) → if Node 20 fails, cancel Node 22 immediately
+      # fail-fast: false → run ALL matrix combinations even if one fails
+      # We use false to see the FULL picture of what's broken
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          # ${{ matrix.node-version }} = current value from the matrix
+          # Job 1 gets '20', Job 2 gets '22'
+          cache: 'npm'
+
+      - name: 📥 Install dependencies
+        run: npm ci
+
+      # ─── CODE COVERAGE ──────────────────────────────
+      # NEW! Run tests WITH coverage reporting.
+      # Coverage = "what percentage of your code is tested?"
+      # Industry standard: aim for >80% coverage.
+      - name: 🧪 Run tests with coverage
+        run: npm run test:coverage
+
+      # NEW! Upload coverage report as an artifact
+      # You can download this from the Actions tab to see
+      # exactly which lines are covered/uncovered.
+      - name: 📤 Upload coverage report
+        if: matrix.node-version == 22
+        # Only upload once (from Node 22), not from every matrix job
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+
+  # ═══════════════════════════════════════════════════
+  # JOB 3: BUILD
+  # ═══════════════════════════════════════════════════
   build:
     name: 🏗️ Build
     runs-on: ubuntu-latest
-    needs: test  # Only build after tests pass
-    # Pipeline so far: lint ✅ → test ✅ → build
+    needs: test
+
+    # ─── JOB OUTPUTS ──────────────────────────────────
+    # NEW! Jobs can output data that other jobs can read.
+    # Here we output the build version for use in deployment.
+    outputs:
+      build-version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: 📥 Checkout code
@@ -145,15 +172,60 @@ jobs:
 
       - name: 🏗️ Build TypeScript
         run: npm run build
-        # tsc compiles .ts → .js into the dist/ folder
-        # If there are type errors, this step FAILS
 
-      # Upload the built files as an "artifact"
-      # Artifacts = files that persist after the job ends
-      # Other jobs or humans can download them
+      # NEW! Extract version from package.json and set as output
+      - name: 📋 Get version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+        # $GITHUB_OUTPUT is a special file that GitHub Actions reads
+        # Whatever you write here becomes available to other jobs
+
       - name: 📤 Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dist
+          name: dist-${{ steps.version.outputs.version }}
+          # Artifact name includes version for traceability!
           path: dist/
-          retention-days: 7  # Keep for 7 days, then auto-delete
+          retention-days: 7
+
+  # ═══════════════════════════════════════════════════
+  # JOB 4: SUMMARY (NEW!)
+  # ═══════════════════════════════════════════════════
+  # This job demonstrates:
+  #   - Reading outputs from previous jobs
+  #   - Conditional steps (only on main branch)
+  #   - Creating a GitHub Actions Summary (markdown in Actions UI)
+  summary:
+    name: 📊 Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [lint, test, build]
+    # needs: [array] = wait for ALL listed jobs to complete
+    if: always()
+    # "if: always()" = run this job even if previous jobs failed
+    # Useful for summary/notification jobs that should ALWAYS run
+
+    steps:
+      - name: 📊 Generate summary
+        run: |
+          echo "## 🚀 CI Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔍 Lint | ${{ needs.lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🧪 Test | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏗️ Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Version**: ${{ needs.build.outputs.build-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch**: \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        # $GITHUB_STEP_SUMMARY = special file that renders as markdown
+        # in the GitHub Actions UI. Super useful for dashboards!
+
+      # NEW! Fail the pipeline if any critical job failed
+      - name: ❌ Check for failures
+        if: needs.lint.result == 'failure' || needs.test.result == 'failure' || needs.build.result == 'failure'
+        run: |
+          echo "❌ Pipeline failed! Check the summary above."
+          exit 1
