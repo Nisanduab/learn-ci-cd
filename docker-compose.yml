@@ -1,0 +1,103 @@
+# ============================================================
+# 🐳 DOCKER COMPOSE — Multi-Service Local Development
+# ============================================================
+#
+# Docker Compose lets you define and run MULTIPLE containers
+# that work together. Think of it as an orchestra conductor
+# for your containers.
+#
+# In real-world apps, you typically have:
+#   - Your API server
+#   - A database (PostgreSQL, MongoDB)
+#   - A cache (Redis)
+#   - Maybe a message queue (RabbitMQ)
+#
+# Docker Compose starts ALL of them with one command:
+#   docker compose up
+#
+# ============================================================
+
+services:
+
+  # ─── YOUR APP ──────────────────────────────────────
+  app:
+    # Build using our Dockerfile
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      # "target: production" = use the production stage from multi-stage build
+
+    # Container name (for easy reference)
+    container_name: learn-cicd-app
+
+    # Port mapping: host:container
+    ports:
+      - "3000:3000"
+    # Left = port on YOUR machine (localhost:3000)
+    # Right = port inside the container
+    # Traffic to localhost:3000 → forwarded to container's port 3000
+
+    # Environment variables
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - APP_VERSION=1.0.0
+
+    # Health check (overrides Dockerfile HEALTHCHECK)
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+    # Restart policy
+    restart: unless-stopped
+    # "unless-stopped" = auto-restart if container crashes
+    # but NOT if you manually stop it with docker compose down
+
+    # Resource limits (prevents container from eating all memory)
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+        # Max 256MB RAM and 50% of one CPU core
+        # In production, you set these based on load testing
+
+  # ─── DEVELOPMENT MODE ─────────────────────────────
+  # A separate service for development with hot-reload
+  app-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+      # "target: builder" = use the builder stage (has devDeps!)
+
+    container_name: learn-cicd-dev
+
+    ports:
+      - "3001:3000"
+    # Different port (3001) so it doesn't conflict with production
+
+    # Mount source code for hot-reload
+    volumes:
+      - ./src:/app/src
+      - ./tsconfig.json:/app/tsconfig.json
+    # Volumes = share files between host and container
+    # Changes on your machine → instantly reflected in the container
+    # This is KEY for development — no need to rebuild!
+
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+
+    # Override the default CMD to use dev server
+    command: npx ts-node src/server.ts
+
+    # This service is optional — only start when explicitly requested
+    profiles:
+      - dev
+    # profiles = this service won't start with "docker compose up"
+    # To start it: docker compose --profile dev up app-dev

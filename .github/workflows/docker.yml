@@ -1,0 +1,162 @@
+# ============================================================
+# 🐳 DOCKER CI/CD — Build, Scan & Push Container Images
+# ============================================================
+#
+# MODULE 3: This workflow handles the Docker side of CI/CD:
+#   1. Build the Docker image
+#   2. Scan it for security vulnerabilities (Trivy)
+#   3. Push it to GitHub Container Registry (ghcr.io)
+#   4. Tag it with version info for traceability
+#
+# This runs AFTER the main CI pipeline passes (lint, test, build).
+# Only runs on pushes to main (not on PRs or develop).
+#
+# ============================================================
+
+name: Docker Build & Push
+
+on:
+  push:
+    branches: [main]
+    # Only build Docker images for production-ready code
+    # PRs run the CI pipeline, but don't build Docker images
+
+  # Allow manual trigger
+  workflow_dispatch:
+
+# Cancel outdated runs
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+# ─── PERMISSIONS ──────────────────────────────────────
+# Grant this workflow permission to push to GitHub Container Registry
+permissions:
+  contents: read
+  packages: write
+  # "packages: write" = permission to push container images to ghcr.io
+  # GitHub Container Registry (ghcr.io) is FREE for public repos!
+
+jobs:
+
+  # ═══════════════════════════════════════════════════
+  # JOB 1: BUILD & PUSH Docker Image
+  # ═══════════════════════════════════════════════════
+  docker:
+    name: 🐳 Build & Push Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      # ─── DOCKER METADATA ──────────────────────────
+      # Generate smart tags for the Docker image.
+      # Instead of just "latest", we create multiple tags:
+      #   - ghcr.io/user/repo:latest
+      #   - ghcr.io/user/repo:main
+      #   - ghcr.io/user/repo:sha-abc1234
+      #   - ghcr.io/user/repo:1.0.0 (from package.json)
+      - name: 🏷️ Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # ghcr.io = GitHub Container Registry
+          # ${{ github.repository }} = "Nisanduab/learn-ci-cd"
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-
+            type=raw,value=latest
+          # This generates tags like:
+          #   ghcr.io/nisanduab/learn-ci-cd:main
+          #   ghcr.io/nisanduab/learn-ci-cd:sha-abc1234
+          #   ghcr.io/nisanduab/learn-ci-cd:latest
+
+      # ─── DOCKER BUILDX ────────────────────────────
+      # Buildx is Docker's next-gen build engine.
+      # Features: multi-platform builds, better caching, etc.
+      - name: 🔧 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ─── LOGIN TO REGISTRY ────────────────────────
+      # Authenticate with GitHub Container Registry
+      - name: 🔑 Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        # ${{ secrets.GITHUB_TOKEN }} = auto-generated token
+        # GitHub automatically creates this — no setup needed!
+        # It has permission to push to ghcr.io for your repo.
+
+      # ─── BUILD & PUSH ─────────────────────────────
+      - name: 🐳 Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # cache-from/to: type=gha = use GitHub Actions cache
+          # for Docker layer caching. This means:
+          #   First build: ~2 minutes (download base image, npm install)
+          #   Subsequent builds: ~30 seconds (cached layers!)
+
+  # ═══════════════════════════════════════════════════
+  # JOB 2: SECURITY SCAN
+  # ═══════════════════════════════════════════════════
+  # Scan the Docker image for known vulnerabilities (CVEs).
+  # This catches security issues in:
+  #   - OS packages (Alpine Linux)
+  #   - Node.js runtime
+  #   - npm dependencies
+  #
+  # Real companies: this gate BLOCKS deployment if critical
+  # vulnerabilities are found.
+  security-scan:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    needs: docker
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      # ─── TRIVY VULNERABILITY SCANNER ───────────────
+      # Trivy is the industry-standard container scanner.
+      # Used by: AWS, Google Cloud, GitLab, Harbor, and more.
+      - name: 🔒 Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:latest
+          format: 'table'
+          # Output format: table (human-readable in logs)
+          exit-code: '1'
+          # exit-code: '1' = FAIL the job if vulnerabilities found
+          # In real production, you might only fail on CRITICAL/HIGH:
+          severity: 'CRITICAL,HIGH'
+          # Only fail on CRITICAL and HIGH severity vulnerabilities
+          # LOW and MEDIUM are logged but don't block deployment
+
+      # Trivy also generates a SARIF report for GitHub Security tab
+      - name: 🔒 Upload Trivy results to GitHub Security
+        uses: aquasecurity/trivy-action@master
+        if: always()
+        # Run even if previous scan found vulnerabilities
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:latest
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+
+      - name: 📤 Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+        # This uploads results to the "Security" tab in your repo!
+        # GitHub will show alerts for any vulnerabilities found.

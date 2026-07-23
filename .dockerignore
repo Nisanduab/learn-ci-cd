@@ -1,0 +1,48 @@
+# ============================================
+# 🐳 .dockerignore — Files Docker Should Ignore
+# ============================================
+# Similar to .gitignore but for Docker.
+# Files listed here are NOT copied into the image.
+# This makes builds faster and images smaller.
+# ============================================
+
+# Dependencies (we install fresh inside container)
+node_modules/
+
+# Build output (we build fresh inside container)
+dist/
+
+# Test & coverage files (not needed in production)
+coverage/
+src/tests/
+vitest.config.ts
+eslint.config.mjs
+
+# Git and IDE files
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# Docker files (no inception!)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Documentation (not needed at runtime)
+docs/
+README.md
+*.md
+
+# Environment files (secrets should never be in images!)
+.env
+.env.*
+
+# Husky (git hooks aren't used in containers)
+.husky/
+
+# CI/CD configs
+.github/
+
+# Logs
+*.log
