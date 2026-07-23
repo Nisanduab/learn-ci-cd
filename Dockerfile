@@ -78,8 +78,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 
 # Install ONLY production dependencies (no devDeps!)
-RUN npm ci --only=production
-# --only=production = skip devDependencies
+RUN npm ci --omit=dev --ignore-scripts
+# --omit=dev = skip devDependencies
+# --ignore-scripts = avoid dev-only lifecycle scripts (e.g., husky prepare)
 # No TypeScript, no ESLint, no Vitest in production image!
 
 # Copy compiled JavaScript from the builder stage
