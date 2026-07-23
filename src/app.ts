@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
+import { config } from './config';
 
 const app = express();
 
@@ -17,8 +18,8 @@ app.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    version: process.env.APP_VERSION || '1.0.0',
-    environment: process.env.NODE_ENV || 'development',
+    version: config.appVersion,
+    environment: config.nodeEnv,
   });
 });
 

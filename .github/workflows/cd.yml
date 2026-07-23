@@ -1,0 +1,299 @@
+# ============================================================
+# 🚀 CD PIPELINE — Continuous Deployment with Environments
+# ============================================================
+#
+# MODULE 4: Environments & Secrets
+#
+# This is the DEPLOYMENT pipeline. It:
+#   1. Deploys to STAGING automatically (on merge to main)
+#   2. Runs smoke tests against staging
+#   3. Waits for MANUAL APPROVAL
+#   4. Deploys to PRODUCTION
+#   5. Runs health checks against production
+#
+# KEY CONCEPT: GitHub Environments
+#   Environments let you:
+#   - Store environment-specific secrets (DB passwords, API keys)
+#   - Require manual approval before deployment
+#   - Set deployment branch rules
+#   - Track deployment history
+#
+# ============================================================
+
+name: CD Pipeline
+
+on:
+  # Only runs AFTER the CI pipeline completes successfully
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types: [completed]
+    branches: [main]
+    # workflow_run trigger:
+    #   - Waits for "CI Pipeline" to finish
+    #   - Only triggers if CI ran on "main" branch
+    #   - Only triggers if CI "completed" (not on every run)
+
+  # Allow manual deployment
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+      skip_staging:
+        description: 'Skip staging and deploy directly to production (DANGEROUS!)'
+        required: false
+        type: boolean
+        default: false
+
+# Cancel outdated deployments
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+  # IMPORTANT: cancel-in-progress: FALSE for deployments!
+  # Unlike CI, you don't want to cancel a deployment mid-way.
+  # That could leave your app in a broken state.
+
+jobs:
+
+  # ═══════════════════════════════════════════════════
+  # GATE: Only proceed if CI passed
+  # ═══════════════════════════════════════════════════
+  check-ci:
+    name: ✅ Verify CI Passed
+    runs-on: ubuntu-latest
+    # Only run if triggered by successful CI, or manual dispatch
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - name: ✅ CI verification
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "🔧 Manual deployment triggered"
+            echo "Target: ${{ inputs.environment || 'staging' }}"
+          else
+            echo "✅ CI Pipeline passed — proceeding with deployment"
+            echo "Triggered by: ${{ github.event.workflow_run.head_sha }}"
+          fi
+
+  # ═══════════════════════════════════════════════════
+  # JOB 1: DEPLOY TO STAGING
+  # ═══════════════════════════════════════════════════
+  # Staging = a copy of production used for final testing.
+  # Auto-deploys on every merge to main (no manual approval).
+  deploy-staging:
+    name: 🟡 Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: check-ci
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      inputs.environment == 'staging' ||
+      !inputs.skip_staging
+
+    # ─── GITHUB ENVIRONMENT ────────────────────────
+    environment:
+      name: staging
+      url: https://staging.example.com
+    # "environment: staging" does several things:
+    #   1. Loads secrets specific to "staging" environment
+    #   2. Shows deployment status in GitHub UI
+    #   3. Records deployment history
+    #   4. Can require reviewers (we'll set this for production)
+
+    # ─── ENVIRONMENT-SPECIFIC SECRETS ──────────────
+    # These are set in GitHub → Settings → Environments → staging
+    # Each environment can have DIFFERENT values for the same secret name!
+    #
+    # Example:
+    #   staging.DATABASE_URL = "postgresql://...:5432/staging_db"
+    #   production.DATABASE_URL = "postgresql://...:5432/production_db"
+    #
+    # Access them with: ${{ secrets.SECRET_NAME }}
+    # GitHub automatically loads the correct environment's secrets.
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🟡 Deploy to staging
+        run: |
+          echo "═══════════════════════════════════════"
+          echo "  🟡 DEPLOYING TO STAGING"
+          echo "═══════════════════════════════════════"
+          echo ""
+          echo "Environment: staging"
+          echo "Version: $(node -p "require('./package.json').version")"
+          echo "Commit: ${{ github.sha }}"
+          echo "Deployed by: ${{ github.actor }}"
+          echo ""
+          # ──────────────────────────────────────────
+          # In a REAL deployment, this would be one of:
+          #
+          # 1. SSH & pull:
+          #    ssh staging-server "cd /app && git pull && npm ci && pm2 restart"
+          #
+          # 2. Docker deploy:
+          #    docker pull ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          #    docker compose up -d
+          #
+          # 3. Cloud deploy:
+          #    aws ecs update-service --cluster staging --service api --force
+          #    gcloud run deploy api --image=... --region=us-central1
+          #    az container create --resource-group staging --name api
+          #
+          # 4. Kubernetes:
+          #    kubectl set image deployment/api api=ghcr.io/...:sha-xxx
+          #    kubectl rollout status deployment/api
+          # ──────────────────────────────────────────
+          echo "✅ Staging deployment simulated successfully!"
+        env:
+          # Access environment-specific secrets
+          DEPLOY_ENV: staging
+          NODE_ENV: staging
+          # In real setup, you'd also have:
+          # DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # API_KEY: ${{ secrets.API_KEY }}
+
+      - name: 🧪 Run smoke tests against staging
+        run: |
+          echo "Running smoke tests against staging..."
+          echo ""
+          # In real setup, these would be HTTP requests to staging:
+          #
+          # # Test health endpoint
+          # curl -f https://staging.example.com/health || exit 1
+          #
+          # # Test API endpoint
+          # curl -f https://staging.example.com/api/greet?name=SmokeTest || exit 1
+          #
+          # # Test response format
+          # HEALTH=$(curl -s https://staging.example.com/health)
+          # echo "$HEALTH" | jq -e '.status == "healthy"' || exit 1
+          #
+          echo "✅ Smoke tests passed on staging!"
+
+  # ═══════════════════════════════════════════════════
+  # JOB 2: DEPLOY TO PRODUCTION
+  # ═══════════════════════════════════════════════════
+  # Production = the LIVE environment serving real users.
+  # REQUIRES manual approval from designated reviewers.
+  deploy-production:
+    name: 🟢 Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+
+    # ─── PRODUCTION ENVIRONMENT ────────────────────
+    environment:
+      name: production
+      url: https://api.example.com
+    # For production environment, you should configure in GitHub:
+    #   Settings → Environments → production → Protection rules:
+    #   ✅ Required reviewers: [your-username]
+    #   ✅ Restrict to protected branches: main only
+    #   ⏱️ Wait timer: 5 minutes (optional cooldown)
+    #
+    # When this job reaches the "environment: production" line,
+    # GitHub PAUSES the pipeline and shows:
+    #
+    #   ┌─────────────────────────────────────────┐
+    #   │  ⏳ Waiting for review                   │
+    #   │                                          │
+    #   │  "production" environment requires       │
+    #   │  approval from: @nisanduab               │
+    #   │                                          │
+    #   │  [✅ Approve] [❌ Reject]                │
+    #   └─────────────────────────────────────────┘
+    #
+    # The pipeline WAITS until a reviewer clicks Approve.
+    # This is your last line of defense before production!
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Deploy to production
+        run: |
+          echo "═══════════════════════════════════════"
+          echo "  🟢 DEPLOYING TO PRODUCTION"
+          echo "═══════════════════════════════════════"
+          echo ""
+          echo "Environment: production"
+          echo "Version: $(node -p "require('./package.json').version")"
+          echo "Commit: ${{ github.sha }}"
+          echo "Deployed by: ${{ github.actor }}"
+          echo "Approved by: (from GitHub Environment protection rules)"
+          echo ""
+          # Same deployment commands as staging,
+          # but targeting production infrastructure.
+          echo "✅ Production deployment simulated successfully!"
+        env:
+          DEPLOY_ENV: production
+          NODE_ENV: production
+          # DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # API_KEY: ${{ secrets.API_KEY }}
+
+      - name: 🏥 Run production health check
+        run: |
+          echo "Running production health check..."
+          # In real setup:
+          # for i in 1 2 3 4 5; do
+          #   HEALTH=$(curl -s https://api.example.com/health)
+          #   STATUS=$(echo "$HEALTH" | jq -r '.status')
+          #   if [ "$STATUS" == "healthy" ]; then
+          #     echo "✅ Health check $i/5: healthy"
+          #   else
+          #     echo "❌ Health check $i/5: UNHEALTHY!"
+          #     echo "Triggering rollback..."
+          #     exit 1
+          #   fi
+          #   sleep 5
+          # done
+          echo "✅ Production health check passed! (5/5)"
+
+  # ═══════════════════════════════════════════════════
+  # JOB 3: POST-DEPLOYMENT NOTIFICATION
+  # ═══════════════════════════════════════════════════
+  notify:
+    name: 📢 Notify Team
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: always()
+    # "if: always()" = run even if deployment failed
+    # You ALWAYS want to notify, especially on failures!
+
+    steps:
+      - name: 📢 Send deployment notification
+        run: |
+          echo "═══════════════════════════════════════"
+          echo "  📢 DEPLOYMENT NOTIFICATION"
+          echo "═══════════════════════════════════════"
+          echo ""
+
+          if [ "${{ needs.deploy-production.result }}" == "success" ]; then
+            echo "✅ Production deployment SUCCEEDED!"
+            echo ""
+            echo "In real setup, this would send:"
+            echo "  - Slack message to #deployments channel"
+            echo "  - Email to the team"
+            echo "  - Update status page"
+            # Real Slack notification:
+            # curl -X POST -H 'Content-type: application/json' \
+            #   --data '{"text":"✅ Production deployed: v1.0.0 by @user"}' \
+            #   ${{ secrets.SLACK_WEBHOOK_URL }}
+          else
+            echo "❌ Deployment had issues!"
+            echo "Staging: ${{ needs.deploy-staging.result }}"
+            echo "Production: ${{ needs.deploy-production.result }}"
+            echo ""
+            echo "In real setup, this would page on-call engineer"
+            # Real PagerDuty alert:
+            # curl -X POST https://events.pagerduty.com/v2/enqueue \
+            #   -H 'Content-Type: application/json' \
+            #   -d '{"routing_key":"...","event_action":"trigger",...}'
+          fi
