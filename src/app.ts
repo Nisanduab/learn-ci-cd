@@ -1,19 +1,49 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { config } from './config';
 
 const app = express();
+
+// Track server start time for uptime calculation
+const startTime = Date.now();
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
 // ============================================
+// 📊 MODULE 6: Request Logging Middleware
+// ============================================
+// Logs every request with timing info.
+// In production, these logs feed into monitoring tools
+// (Datadog, Grafana, ELK Stack) for dashboards & alerts.
+if (config.enableRequestLogging) {
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    const start = Date.now();
+    _res.on('finish', () => {
+      const duration = Date.now() - start;
+      const logEntry = {
+        method: req.method,
+        path: req.path,
+        status: _res.statusCode,
+        duration: `${duration}ms`,
+        timestamp: new Date().toISOString(),
+      };
+      // In production, this would go to a logging service
+      // like Winston → CloudWatch, or Pino → Datadog
+      process.stdout.write(JSON.stringify(logEntry) + '\n');
+    });
+    next();
+  });
+}
+
+// ============================================
 // 🏠 Routes — Simple API for CI/CD learning
 // ============================================
 
-// Health check endpoint — crucial for CI/CD!
-// This is what monitoring tools hit to verify your app is alive
+// ─── BASIC HEALTH CHECK ─────────────────────
+// Used by: load balancers, uptime monitors
+// Quick check: "is the app responding?"
 app.get('/health', (_req: Request, res: Response) => {
   res.json({
     status: 'healthy',
@@ -21,6 +51,66 @@ app.get('/health', (_req: Request, res: Response) => {
     version: config.appVersion,
     environment: config.nodeEnv,
   });
+});
+
+// ─── DEEP HEALTH CHECK (MODULE 6) ───────────
+// Used by: Kubernetes readiness probes, deployment verification
+// Checks: app + dependencies (DB, cache, external APIs)
+// This is what post-deployment smoke tests hit.
+app.get('/health/deep', (_req: Request, res: Response) => {
+  const uptime = Math.floor((Date.now() - startTime) / 1000);
+  const memoryUsage = process.memoryUsage();
+
+  // In production, you'd also check:
+  //   - Database connectivity
+  //   - Redis/cache connectivity
+  //   - External API availability
+  //   - Disk space
+  //   - Queue depth
+  const checks = {
+    app: { status: 'healthy' },
+    memory: {
+      status: memoryUsage.heapUsed < 500 * 1024 * 1024 ? 'healthy' : 'degraded',
+      heapUsedMB: Math.round(memoryUsage.heapUsed / 1024 / 1024),
+      heapTotalMB: Math.round(memoryUsage.heapTotal / 1024 / 1024),
+    },
+    // database: { status: 'healthy', latencyMs: 5 },  // Real DB check
+    // redis: { status: 'healthy', latencyMs: 1 },      // Real cache check
+  };
+
+  const overallStatus = Object.values(checks).every(
+    c => c.status === 'healthy'
+  ) ? 'healthy' : 'degraded';
+
+  const statusCode = overallStatus === 'healthy' ? 200 : 503;
+
+  res.status(statusCode).json({
+    status: overallStatus,
+    version: config.appVersion,
+    environment: config.nodeEnv,
+    uptime: `${uptime}s`,
+    checks,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// ─── READINESS CHECK (MODULE 6) ─────────────
+// Used by: Kubernetes readiness probes
+// "Is this instance ready to receive traffic?"
+// Separate from health — app can be alive but not ready
+// (e.g., still warming up caches, loading config)
+app.get('/ready', (_req: Request, res: Response) => {
+  // In a real app, you'd check if:
+  //   - Database connection pool is initialized
+  //   - Cache is warmed up
+  //   - Config is loaded
+  const isReady = true;
+
+  if (isReady) {
+    res.json({ status: 'ready', timestamp: new Date().toISOString() });
+  } else {
+    res.status(503).json({ status: 'not_ready', timestamp: new Date().toISOString() });
+  }
 });
 
 // Simple API endpoint
@@ -74,3 +164,4 @@ app.post('/api/calculate', (req: Request, res: Response) => {
 // We separate the app from the server so tests can import the app
 // without starting the server
 export { app };
+

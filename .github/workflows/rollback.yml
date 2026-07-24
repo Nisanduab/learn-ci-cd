@@ -1,0 +1,253 @@
+# ============================================================
+# 🔄 ROLLBACK WORKFLOW — Emergency & Planned Rollbacks
+# ============================================================
+#
+# MODULE 6: Monitoring & Rollbacks
+#
+# When a deployment goes wrong, you need to rollback FAST.
+# This workflow provides:
+#   1. Manual emergency rollback (one-click)
+#   2. Rollback to a specific version/SHA
+#   3. Post-rollback verification
+#   4. Team notification
+#
+# In production, rollback time is a critical metric:
+#   - Industry standard: < 5 minutes
+#   - Top companies (Google, Netflix): < 1 minute
+#   - Our target: < 2 minutes (automated)
+#
+# ============================================================
+
+name: 🔄 Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to rollback'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+
+      rollback-type:
+        description: 'Rollback type'
+        required: true
+        type: choice
+        options:
+          - previous-version
+          - specific-sha
+        default: previous-version
+
+      target-sha:
+        description: 'Target commit SHA (only if rollback-type is specific-sha)'
+        required: false
+        type: string
+        default: ''
+
+      reason:
+        description: 'Reason for rollback'
+        required: true
+        type: string
+        default: 'Production incident'
+
+jobs:
+
+  # ═══════════════════════════════════════════════════
+  # JOB 1: VALIDATE & PREPARE
+  # ═══════════════════════════════════════════════════
+  validate:
+    name: ✅ Validate Rollback
+    runs-on: ubuntu-latest
+
+    outputs:
+      target-sha: ${{ steps.resolve.outputs.sha }}
+      target-version: ${{ steps.resolve.outputs.version }}
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 10
+          # Fetch last 10 commits so we can find previous versions
+
+      - name: 🔍 Resolve rollback target
+        id: resolve
+        run: |
+          echo "═══════════════════════════════════════"
+          echo "  🔄 ROLLBACK VALIDATION"
+          echo "═══════════════════════════════════════"
+          echo ""
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Type: ${{ inputs.rollback-type }}"
+          echo "Reason: ${{ inputs.reason }}"
+          echo "Triggered by: ${{ github.actor }}"
+          echo ""
+
+          if [ "${{ inputs.rollback-type }}" == "specific-sha" ]; then
+            TARGET="${{ inputs.target-sha }}"
+            if [ -z "$TARGET" ]; then
+              echo "❌ ERROR: target-sha is required for specific-sha rollback"
+              exit 1
+            fi
+            echo "sha=$TARGET" >> $GITHUB_OUTPUT
+            echo "version=sha-${TARGET:0:7}" >> $GITHUB_OUTPUT
+            echo "Rolling back to specific SHA: $TARGET"
+          else
+            # Get the previous commit
+            TARGET=$(git rev-parse HEAD~1)
+            echo "sha=$TARGET" >> $GITHUB_OUTPUT
+            echo "version=sha-${TARGET:0:7}" >> $GITHUB_OUTPUT
+            echo "Rolling back to previous: $TARGET"
+          fi
+
+  # ═══════════════════════════════════════════════════
+  # JOB 2: EXECUTE ROLLBACK
+  # ═══════════════════════════════════════════════════
+  rollback:
+    name: 🔄 Execute Rollback (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    needs: validate
+    environment:
+      name: ${{ inputs.environment }}
+      # Uses the SAME environment protection rules!
+      # Production rollback still needs approval.
+
+    steps:
+      - name: 📥 Checkout target version
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.target-sha }}
+
+      - name: 🔄 Execute rollback
+        run: |
+          echo "═══════════════════════════════════════"
+          echo "  🔄 EXECUTING ROLLBACK"
+          echo "═══════════════════════════════════════"
+          echo ""
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Target SHA: ${{ needs.validate.outputs.target-sha }}"
+          echo "Target version: ${{ needs.validate.outputs.target-version }}"
+          echo ""
+
+          # ──────────────────────────────────────────
+          # In a REAL rollback, this would be:
+          #
+          # Docker-based rollback (fastest):
+          #   docker pull ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.target-version }}
+          #   docker compose up -d
+          #
+          # Kubernetes rollback (instant):
+          #   kubectl rollout undo deployment/api -n ${{ inputs.environment }}
+          #   # OR rollback to specific revision:
+          #   kubectl rollout undo deployment/api --to-revision=3
+          #
+          # Cloud-based rollback:
+          #   aws ecs update-service --cluster $ENV --service api \
+          #     --task-definition api:PREVIOUS_VERSION
+          #
+          # Blue-Green rollback (fastest possible):
+          #   # Just switch the load balancer back to blue
+          #   aws elbv2 modify-listener --listener-arn $ARN \
+          #     --default-actions TargetGroupArn=$BLUE_TG
+          # ──────────────────────────────────────────
+
+          echo "✅ Rollback executed successfully!"
+          echo "Previous version restored."
+
+  # ═══════════════════════════════════════════════════
+  # JOB 3: POST-ROLLBACK VERIFICATION
+  # ═══════════════════════════════════════════════════
+  verify:
+    name: ✅ Post-Rollback Verification
+    runs-on: ubuntu-latest
+    needs: [validate, rollback]
+
+    steps:
+      - name: 🏥 Health check after rollback
+        run: |
+          echo "═══════════════════════════════════════"
+          echo "  🏥 POST-ROLLBACK HEALTH CHECK"
+          echo "═══════════════════════════════════════"
+          echo ""
+
+          # In real setup:
+          # TARGET_URL="${{ inputs.environment == 'production' && 'https://api.example.com' || 'https://staging.example.com' }}"
+          #
+          # for i in 1 2 3 4 5 6 7 8 9 10; do
+          #   HEALTH=$(curl -sf "$TARGET_URL/health/deep" || echo '{"status":"error"}')
+          #   STATUS=$(echo "$HEALTH" | jq -r '.status')
+          #   VERSION=$(echo "$HEALTH" | jq -r '.version')
+          #
+          #   if [ "$STATUS" == "healthy" ]; then
+          #     echo "✅ Check $i/10: healthy (version: $VERSION)"
+          #   else
+          #     echo "❌ Check $i/10: $STATUS"
+          #     if [ $i -ge 5 ]; then
+          #       echo "🚨 CRITICAL: Rollback may have failed!"
+          #       echo "Escalating to on-call engineer..."
+          #       exit 1
+          #     fi
+          #   fi
+          #   sleep 5
+          # done
+
+          echo "✅ All 10 health checks passed!"
+          echo "Rollback verified — service is healthy."
+
+  # ═══════════════════════════════════════════════════
+  # JOB 4: NOTIFICATION
+  # ═══════════════════════════════════════════════════
+  notify:
+    name: 📢 Rollback Notification
+    runs-on: ubuntu-latest
+    needs: [validate, rollback, verify]
+    if: always()
+
+    steps:
+      - name: 📢 Notify team about rollback
+        run: |
+          echo "═══════════════════════════════════════"
+          echo "  📢 ROLLBACK NOTIFICATION"
+          echo "═══════════════════════════════════════"
+          echo ""
+          echo "🔄 ROLLBACK EXECUTED"
+          echo ""
+          echo "Environment: ${{ inputs.environment }}"
+          echo "Target: ${{ needs.validate.outputs.target-version }}"
+          echo "Reason: ${{ inputs.reason }}"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "Rollback status: ${{ needs.rollback.result }}"
+          echo "Verification: ${{ needs.verify.result }}"
+          echo ""
+
+          if [ "${{ needs.verify.result }}" == "success" ]; then
+            echo "✅ Rollback completed successfully."
+            echo "Service is healthy on the previous version."
+          else
+            echo "🚨 ALERT: Rollback verification FAILED!"
+            echo "Manual intervention required."
+            echo "Paging on-call engineer..."
+          fi
+          echo ""
+          echo "In real setup, this sends:"
+          echo "  - 🔔 Slack alert to #incidents"
+          echo "  - 📧 Email to engineering-team@company.com"
+          echo "  - 📟 PagerDuty alert if verification failed"
+          echo "  - 📝 Incident ticket in Jira/Linear"
+
+      - name: 📝 Create rollback summary
+        if: always()
+        run: |
+          echo "## 🔄 Rollback Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Detail | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ inputs.environment }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Target | ${{ needs.validate.outputs.target-version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Reason | ${{ inputs.reason }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered by | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rollback | ${{ needs.rollback.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Verification | ${{ needs.verify.result }} |" >> $GITHUB_STEP_SUMMARY

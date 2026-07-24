@@ -37,6 +37,32 @@ describe('GET /health', () => {
   });
 });
 
+// ─── Deep Health Check Tests (Module 6) ──────────────
+describe('GET /health/deep', () => {
+  it('should return deep health with checks and uptime', async () => {
+    const response = await request(app).get('/health/deep');
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe('healthy');
+    expect(response.body).toHaveProperty('uptime');
+    expect(response.body).toHaveProperty('checks');
+    expect(response.body.checks).toHaveProperty('app');
+    expect(response.body.checks).toHaveProperty('memory');
+    expect(response.body.checks.memory).toHaveProperty('heapUsedMB');
+  });
+});
+
+// ─── Readiness Check Tests (Module 6) ────────────────
+describe('GET /ready', () => {
+  it('should return ready status', async () => {
+    const response = await request(app).get('/ready');
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe('ready');
+    expect(response.body).toHaveProperty('timestamp');
+  });
+});
+
 // ─── Greet API Tests ─────────────────────────────────
 describe('GET /api/greet', () => {
   it('should greet with default name', async () => {
