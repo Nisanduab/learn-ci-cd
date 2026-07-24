@@ -1,0 +1,139 @@
+# ============================================================
+# ♻️ REUSABLE WORKFLOW — DRY Pipelines
+# ============================================================
+#
+# MODULE 5: Reusable Workflows
+#
+# Problem: We have "checkout → setup node → npm ci" repeated
+# in EVERY workflow. What if we have 10 workflows?
+# That's 10 places to update when we change Node version!
+#
+# Solution: Reusable workflows. Define it ONCE, call it everywhere.
+# Like a function in programming:
+#
+#   // Instead of copy-pasting code:
+#   function setupAndBuild(nodeVersion, runTests) { ... }
+#
+#   // Call it from different places:
+#   setupAndBuild('22', true);
+#   setupAndBuild('20', false);
+#
+# Real-world: Large companies (Google, Meta, Netflix) have
+# HUNDREDS of repos calling shared reusable workflows.
+#
+# ============================================================
+
+name: Reusable Node.js Setup & Build
+
+on:
+  # "workflow_call" = this workflow can be CALLED by other workflows
+  # It CANNOT be triggered directly by push/PR
+  workflow_call:
+    # ─── INPUTS ──────────────────────────────────
+    # Parameters that the calling workflow passes in
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: string
+        default: '22'
+
+      run-lint:
+        description: 'Whether to run linting'
+        required: false
+        type: boolean
+        default: true
+
+      run-tests:
+        description: 'Whether to run tests'
+        required: false
+        type: boolean
+        default: true
+
+      run-build:
+        description: 'Whether to run build'
+        required: false
+        type: boolean
+        default: true
+
+    # ─── OUTPUTS ─────────────────────────────────
+    # Data this workflow sends back to the caller
+    outputs:
+      build-version:
+        description: 'The version from package.json'
+        value: ${{ jobs.setup-and-build.outputs.version }}
+
+    # ─── SECRETS ─────────────────────────────────
+    # Secrets can be passed through (not inherited by default)
+    secrets:
+      NPM_TOKEN:
+        required: false
+        description: 'NPM token for private packages'
+
+jobs:
+  setup-and-build:
+    name: 🔧 Setup & Build (Node ${{ inputs.node-version }})
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+
+      - name: 📥 Install dependencies
+        run: npm ci
+
+      - name: 🔍 Run ESLint
+        if: inputs.run-lint
+        run: npm run lint
+
+      - name: 🧪 Run tests
+        if: inputs.run-tests
+        run: npm run test:coverage
+
+      - name: 🏗️ Build
+        if: inputs.run-build
+        run: npm run build
+
+      - name: 📋 Get version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: 📤 Upload build artifact
+        if: inputs.run-build
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-node-${{ inputs.node-version }}
+          path: dist/
+          retention-days: 7
+
+# ─── HOW TO USE THIS IN OTHER WORKFLOWS ──────────────
+#
+# In any other workflow file:
+#
+#   jobs:
+#     build:
+#       uses: ./.github/workflows/reusable-setup.yml
+#       with:
+#         node-version: '22'
+#         run-lint: true
+#         run-tests: true
+#         run-build: true
+#
+# Or from a DIFFERENT repository:
+#
+#   jobs:
+#     build:
+#       uses: org/shared-workflows/.github/workflows/node-setup.yml@main
+#       with:
+#         node-version: '22'
+#
+# This is how companies maintain CI/CD across hundreds of repos!

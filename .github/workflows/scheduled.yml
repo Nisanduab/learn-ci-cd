@@ -1,0 +1,154 @@
+# ============================================================
+# 🕐 SCHEDULED PIPELINE — Nightly Builds & Dependency Audits
+# ============================================================
+#
+# MODULE 5: Scheduled Pipelines
+#
+# This workflow runs on a SCHEDULE (cron), not on push/PR.
+#
+# Why schedule pipelines?
+# 1. Dependency audits — catch new vulnerabilities overnight
+# 2. Nightly builds — verify nothing broke from external changes
+# 3. Stale dependency checks — keep dependencies updated
+# 4. Performance benchmarks — track degradation over time
+#
+# Real-world examples:
+#   - Netflix runs nightly chaos engineering tests
+#   - Google runs continuous fuzzing on all projects
+#   - Banks run nightly compliance scans
+#
+# ============================================================
+
+name: Scheduled Checks
+
+on:
+  schedule:
+    # ─── CRON SYNTAX ──────────────────────────────
+    # ┌───────────── minute (0-59)
+    # │ ┌───────────── hour (0-23, UTC!)
+    # │ │ ┌───────────── day of month (1-31)
+    # │ │ │ ┌───────────── month (1-12)
+    # │ │ │ │ ┌───────────── day of week (0-6, Sun=0)
+    # │ │ │ │ │
+    # * * * * *
+
+    - cron: '0 2 * * 1-5'
+    # Translation: At 02:00 UTC, Monday through Friday
+    # = 7:30 AM IST (your timezone) every weekday
+    #
+    # Other useful schedules:
+    #   '0 0 * * *'     = midnight UTC, every day
+    #   '0 */6 * * *'   = every 6 hours
+    #   '0 0 * * 0'     = midnight UTC, every Sunday
+    #   '0 0 1 * *'     = first day of every month
+
+  # Allow manual trigger for testing
+  workflow_dispatch:
+
+jobs:
+
+  # ═══════════════════════════════════════════════════
+  # JOB 1: DEPENDENCY AUDIT
+  # ═══════════════════════════════════════════════════
+  # Check npm packages for known security vulnerabilities.
+  # This catches NEW vulnerabilities discovered overnight
+  # in packages you're already using.
+  dependency-audit:
+    name: 🔒 Dependency Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: 📥 Install dependencies
+        run: npm ci
+
+      - name: 🔒 Run npm audit
+        run: |
+          echo "═══════════════════════════════════════"
+          echo "  🔒 NPM SECURITY AUDIT"
+          echo "═══════════════════════════════════════"
+          echo ""
+          # npm audit checks for known vulnerabilities
+          # --audit-level=high = only fail on high/critical severity
+          npm audit --audit-level=high || true
+          # "|| true" prevents job from failing on audit findings
+          # Instead, we report them. In production, you might want
+          # to remove "|| true" so the job FAILS on vulnerabilities.
+          echo ""
+          echo "Audit complete! Review any findings above."
+
+      - name: 📊 Check for outdated packages
+        run: |
+          echo "═══════════════════════════════════════"
+          echo "  📊 OUTDATED PACKAGES"
+          echo "═══════════════════════════════════════"
+          echo ""
+          npm outdated || true
+          echo ""
+          echo "Consider updating packages with major version bumps."
+
+  # ═══════════════════════════════════════════════════
+  # JOB 2: NIGHTLY BUILD & TEST
+  # ═══════════════════════════════════════════════════
+  # Catches issues from:
+  # - New OS/runtime updates on GitHub runners
+  # - Transitive dependency changes
+  # - Environment drift
+  nightly-build:
+    name: 🌙 Nightly Build
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20, 22]
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: 📥 Install dependencies
+        run: npm ci
+
+      - name: 🔍 Lint
+        run: npm run lint
+
+      - name: 🧪 Test with coverage
+        run: npm run test:coverage
+
+      - name: 🏗️ Build
+        run: npm run build
+
+  # ═══════════════════════════════════════════════════
+  # JOB 3: SUMMARY REPORT
+  # ═══════════════════════════════════════════════════
+  report:
+    name: 📊 Nightly Report
+    runs-on: ubuntu-latest
+    needs: [dependency-audit, nightly-build]
+    if: always()
+
+    steps:
+      - name: 📊 Generate nightly report
+        run: |
+          echo "## 🌙 Nightly Report — $(date -u '+%Y-%m-%d')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔒 Dependency Audit | ${{ needs.dependency-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌙 Nightly Build | ${{ needs.nightly-build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Schedule: Weekdays at 02:00 UTC" >> $GITHUB_STEP_SUMMARY
