@@ -34,8 +34,9 @@ concurrency:
 permissions:
   contents: read
   packages: write
-  # "packages: write" = permission to push container images to ghcr.io
-  # GitHub Container Registry (ghcr.io) is FREE for public repos!
+  security-events: write
+  # "packages: write" = push container images to ghcr.io
+  # "security-events: write" = upload Trivy SARIF to Security tab
 
 jobs:
 
@@ -50,6 +51,15 @@ jobs:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
 
+      # ─── LOWERCASE REPO NAME ────────────────────
+      # Docker image names MUST be all lowercase!
+      # github.repository = "Nisanduab/learn-ci-cd" (uppercase N)
+      # Docker rejects: ghcr.io/Nisanduab/... ❌
+      # Docker accepts:  ghcr.io/nisanduab/... ✅
+      - name: 🔡 Lowercase image name
+        id: repo
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       # ─── DOCKER METADATA ──────────────────────────
       # Generate smart tags for the Docker image.
       # Instead of just "latest", we create multiple tags:
@@ -61,9 +71,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ steps.repo.outputs.name }}
           # ghcr.io = GitHub Container Registry
-          # ${{ github.repository }} = "Nisanduab/learn-ci-cd"
+          # Using lowercased repo name (Docker requires lowercase!)
           tags: |
             type=ref,event=branch
             type=sha,prefix=sha-
@@ -129,15 +139,19 @@ jobs:
       # ─── TRIVY VULNERABILITY SCANNER ───────────────
       # Trivy is the industry-standard container scanner.
       # Used by: AWS, Google Cloud, GitLab, Harbor, and more.
+      # Lowercase repo name (same fix as build job)
+      - name: 🔡 Lowercase image name
+        id: repo
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       - name: 🔒 Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ghcr.io/${{ github.repository }}:latest
+          image-ref: ghcr.io/${{ steps.repo.outputs.name }}:latest
           format: 'table'
           # Output format: table (human-readable in logs)
           exit-code: '1'
           # exit-code: '1' = FAIL the job if vulnerabilities found
-          # In real production, you might only fail on CRITICAL/HIGH:
           severity: 'CRITICAL,HIGH'
           # Only fail on CRITICAL and HIGH severity vulnerabilities
           # LOW and MEDIUM are logged but don't block deployment
@@ -148,13 +162,13 @@ jobs:
         if: always()
         # Run even if previous scan found vulnerabilities
         with:
-          image-ref: ghcr.io/${{ github.repository }}:latest
+          image-ref: ghcr.io/${{ steps.repo.outputs.name }}:latest
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH,MEDIUM'
 
       - name: 📤 Upload SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
